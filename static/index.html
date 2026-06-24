@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Poker Chat Agent</title>
+<style>
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    max-width: 700px;
+    margin: 40px auto;
+    padding: 0 20px;
+    background: #0f3d23;
+    color: #f0f0f0;
+  }
+  h1 { text-align: center; margin-bottom: 4px; }
+  .subtitle { text-align: center; color: #b8d8c8; margin-bottom: 20px; }
+  #chat {
+    background: #15502f;
+    border-radius: 10px;
+    padding: 16px;
+    height: 480px;
+    overflow-y: auto;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .msg {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+  }
+  .msg.user { align-self: flex-end; background: #d4af37; color: #1c1c1c; }
+  .msg.assistant { align-self: flex-start; background: #1f6b3a; color: #f0f0f0; }
+  .msg .note { color: #ffd76a; font-size: 12px; font-style: italic; }
+  .msg ul { margin: 4px 0; padding-left: 20px; }
+  .msg li { margin-bottom: 2px; }
+  .msg div:empty { display: none; }
+  .input-row { display: flex; gap: 8px; }
+  #input {
+    flex: 1;
+    padding: 12px;
+    border-radius: 8px;
+    border: none;
+    font-size: 15px;
+  }
+  #send-btn {
+    padding: 12px 20px;
+    border-radius: 8px;
+    border: none;
+    background: #d4af37;
+    color: #1c1c1c;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  #send-btn:disabled { opacity: 0.5; cursor: default; }
+  details.picker {
+    background: #15502f;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+  }
+  details.picker summary { cursor: pointer; color: #ffd76a; font-weight: bold; }
+  .picker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .picker-field label { display: block; font-size: 13px; color: #b8d8c8; margin-bottom: 4px; }
+  .card-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .card-picker { display: flex; gap: 3px; }
+  .picker select, .picker input {
+    padding: 6px;
+    border-radius: 6px;
+    border: none;
+    font-size: 14px;
+  }
+  #compose-btn {
+    margin-top: 12px;
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: none;
+    background: #2e7d4f;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<h1>🃏 Poker Chat Agent</h1>
+<p class="subtitle">Tell it your hand, position, and the board — it'll figure out the rest.</p>
+
+<div id="chat"></div>
+
+<details class="picker">
+  <summary>Quick picker (build a message instead of typing it)</summary>
+  <div class="picker-grid">
+    <div class="picker-field">
+      <label>Hole cards</label>
+      <div class="card-row" id="hole-pickers"></div>
+    </div>
+    <div class="picker-field">
+      <label>Street</label>
+      <select id="street-select" onchange="renderBoardPickers()">
+        <option value="0">Preflop</option>
+        <option value="3" selected>Flop</option>
+        <option value="4">Turn</option>
+        <option value="5">River</option>
+      </select>
+    </div>
+    <div class="picker-field" style="grid-column: 1 / -1;">
+      <label>Board</label>
+      <div class="card-row" id="board-pickers"></div>
+    </div>
+    <div class="picker-field">
+      <label>Your position</label>
+      <select id="position-select">
+        <option value="">(not sure / skip)</option>
+        <option value="Early">Early (UTG)</option>
+        <option value="Middle">Middle (MP/HJ)</option>
+        <option value="Late">Late (CO)</option>
+        <option value="BTN">Button</option>
+        <option value="SB">Small Blind</option>
+        <option value="BB">Big Blind</option>
+      </select>
+    </div>
+    <div class="picker-field">
+      <label>Raised before you? (position)</label>
+      <select id="raiser-select">
+        <option value="">(no one / skip)</option>
+        <option value="Early">Early (UTG)</option>
+        <option value="Middle">Middle (MP/HJ)</option>
+        <option value="Late">Late (CO)</option>
+        <option value="BTN">Button</option>
+        <option value="SB">Small Blind</option>
+      </select>
+    </div>
+    <div class="picker-field">
+      <label>Pot size</label>
+      <input id="pot-input" type="number" min="0" placeholder="optional">
+    </div>
+    <div class="picker-field">
+      <label>Bet to call</label>
+      <input id="bet-input" type="number" min="0" placeholder="optional">
+    </div>
+  </div>
+  <button id="compose-btn" onclick="composeMessage()">Put this into the message box</button>
+</details>
+
+<div class="input-row">
+  <input id="input" type="text" placeholder="e.g. I have AhKh, board is Qh Jh 2c, what should I do?" />
+  <button id="send-btn" onclick="send()">Send</button>
+</div>
+
+<script>
+const chatEl = document.getElementById("chat");
+const inputEl = document.getElementById("input");
+const sendBtn = document.getElementById("send-btn");
+let history = [];
+
+const RANKS = ["2","3","4","5","6","7","8","9","T","J","Q","K","A"];
+const SUITS = [
+  {code: "s", symbol: "♠"}, {code: "h", symbol: "♥"},
+  {code: "d", symbol: "♦"}, {code: "c", symbol: "♣"},
+];
+
+function makeCardPicker() {
+  const wrap = document.createElement("div");
+  wrap.className = "card-picker";
+  const rankSelect = document.createElement("select");
+  rankSelect.className = "rank-select";
+  RANKS.forEach(r => rankSelect.appendChild(new Option(r, r)));
+  const suitSelect = document.createElement("select");
+  suitSelect.className = "suit-select";
+  SUITS.forEach(s => suitSelect.appendChild(new Option(s.symbol, s.code)));
+  wrap.appendChild(rankSelect);
+  wrap.appendChild(suitSelect);
+  return wrap;
+}
+
+function readCard(picker) {
+  return picker.querySelector(".rank-select").value + picker.querySelector(".suit-select").value;
+}
+
+function renderHolePickers() {
+  const container = document.getElementById("hole-pickers");
+  container.innerHTML = "";
+  container.appendChild(makeCardPicker());
+  container.appendChild(makeCardPicker());
+}
+
+function renderBoardPickers() {
+  const count = parseInt(document.getElementById("street-select").value, 10);
+  const container = document.getElementById("board-pickers");
+  container.innerHTML = "";
+  for (let i = 0; i < count; i++) container.appendChild(makeCardPicker());
+  if (count === 0) container.innerHTML = "<span style='color:#b8d8c8; font-size:13px;'>No board yet (preflop)</span>";
+}
+
+function composeMessage() {
+  const holeCards = [...document.querySelectorAll("#hole-pickers .card-picker")].map(readCard);
+  const boardCards = [...document.querySelectorAll("#board-pickers .card-picker")].map(readCard);
+  const position = document.getElementById("position-select").value;
+  const raiser = document.getElementById("raiser-select").value;
+  const pot = document.getElementById("pot-input").value;
+  const bet = document.getElementById("bet-input").value;
+
+  let parts = [`My hole cards are ${holeCards.join(" ")}.`];
+  if (boardCards.length > 0) {
+    parts.push(`The board is ${boardCards.join(" ")}.`);
+  } else {
+    parts.push("There's no board yet, this is preflop.");
+  }
+  if (position) parts.push(`I'm in the ${position} position.`);
+  if (raiser) parts.push(`Someone in ${raiser} position raised before me.`);
+  if (pot) parts.push(`The pot is ${pot}.`);
+  if (bet) parts.push(`I need to call ${bet}.`);
+  parts.push("What should I do?");
+
+  inputEl.value = parts.join(" ");
+  inputEl.focus();
+}
+
+renderHolePickers();
+renderBoardPickers();
+addBubble("assistant",
+  "👋 Hey! Tell me about your hand — your cards, your position, the board if there is one, " +
+  "and a bet/pot size if you're facing a decision. Or use the Quick picker below to build " +
+  "the message instead of typing it.\n\nExample: \"I have AhKh, board is Qh Jh 2c, pot is " +
+  "100, I need to call 20. What should I do?\""
+);
+
+function escapeHtml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function inlineFormat(line) {
+  return line
+    .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+    .replace(/(?<!\w)_(.+?)_(?!\w)/g, "<i>$1</i>");
+}
+
+// Small, deliberately limited markdown renderer -- just enough for what the model
+// actually produces (bold, bullet lists, paragraph breaks), not a full parser.
+function renderMarkdown(text) {
+  const lines = escapeHtml(text).split("\n");
+  let html = "";
+  let inList = false;
+  for (const line of lines) {
+    const bullet = line.match(/^[-*]\s+(.*)/);
+    if (bullet) {
+      if (!inList) { html += "<ul>"; inList = true; }
+      html += `<li>${inlineFormat(bullet[1])}</li>`;
+    } else {
+      if (inList) { html += "</ul>"; inList = false; }
+      html += line.trim() === "" ? "<br>" : `<div>${inlineFormat(line)}</div>`;
+    }
+  }
+  if (inList) html += "</ul>";
+  return html;
+}
+
+function addBubble(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.innerHTML = renderMarkdown(text);
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return div;
+}
+
+async function send() {
+  const text = inputEl.value.trim();
+  if (!text) return;
+  inputEl.value = "";
+  sendBtn.disabled = true;
+
+  addBubble("user", text);
+  history.push({role: "user", content: text});
+
+  const assistantBubble = addBubble("assistant", "");
+
+  try {
+    const res = await fetch("/chat", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({messages: history}),
+    });
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = "";
+
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      fullText += decoder.decode(value, {stream: true});
+      assistantBubble.innerHTML = renderMarkdown(fullText);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    history.push({role: "assistant", content: fullText});
+  } catch (e) {
+    assistantBubble.textContent = "Something went wrong reaching the agent.";
+  }
+
+  sendBtn.disabled = false;
+  inputEl.focus();
+}
+
+inputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") send();
+});
+</script>
+
+</body>
+</html>
