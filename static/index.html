@@ -102,6 +102,7 @@
   #image-input { display: none; }
   #image-preview {
     display: none;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
     background: #15502f;
@@ -109,13 +110,20 @@
     padding: 8px 12px;
     margin-bottom: 8px;
   }
-  #image-preview img { height: 60px; border-radius: 6px; }
-  #image-preview button {
+  .preview-thumb { position: relative; display: inline-block; }
+  .preview-thumb img { height: 60px; border-radius: 6px; display: block; }
+  .preview-thumb button {
+    position: absolute;
+    top: -6px;
+    right: -6px;
     background: #6b1f1f;
     color: white;
     border: none;
-    border-radius: 6px;
-    padding: 4px 10px;
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    font-size: 12px;
+    line-height: 1;
     cursor: pointer;
   }
   .msg img.attached { max-width: 100%; border-radius: 8px; margin-top: 6px; display: block; }
@@ -183,15 +191,11 @@
   <button id="compose-btn" onclick="composeMessage()">Put this into the message box</button>
 </details>
 
-<div id="image-preview">
-  <img id="preview-img" src="" alt="attached photo">
-  <span>Photo attached</span>
-  <button onclick="clearImage()">Remove</button>
-</div>
+<div id="image-preview"></div>
 
 <div class="input-row">
-  <label id="attach-btn" for="image-input" title="Attach a photo of the table">📷</label>
-  <input id="image-input" type="file" accept="image/*" onchange="handleImageSelect(event)">
+  <label id="attach-btn" for="image-input" title="Attach photos (e.g. your hand + the table)">📷</label>
+  <input id="image-input" type="file" accept="image/*" multiple onchange="handleImageSelect(event)">
   <input id="input" type="text" placeholder="e.g. I have AhKh, board is Qh Jh 2c, what should I do?" />
   <button id="send-btn" onclick="send()">Send</button>
 </div>
@@ -201,7 +205,7 @@ const chatEl = document.getElementById("chat");
 const inputEl = document.getElementById("input");
 const sendBtn = document.getElementById("send-btn");
 let history = [];
-let attachedImage = null; // data URL of the (downscaled) attached photo, or null
+let attachedImages = []; // data URLs of the (downscaled) attached photos
 
 // Shrinks the image client-side before it ever leaves the browser -- keeps the request
 // small and keeps vision API costs down, since cost scales with image resolution.
@@ -231,17 +235,34 @@ function downscaleImage(file, maxDim = 1024) {
 }
 
 async function handleImageSelect(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  attachedImage = await downscaleImage(file);
-  document.getElementById("preview-img").src = attachedImage;
-  document.getElementById("image-preview").style.display = "flex";
+  const files = [...event.target.files];
+  event.target.value = ""; // allow re-selecting the same file(s) again later
+  if (files.length === 0) return;
+  const dataUrls = await Promise.all(files.map(downscaleImage));
+  attachedImages.push(...dataUrls);
+  renderImagePreviews();
 }
 
-function clearImage() {
-  attachedImage = null;
-  document.getElementById("image-input").value = "";
-  document.getElementById("image-preview").style.display = "none";
+function removeImage(index) {
+  attachedImages.splice(index, 1);
+  renderImagePreviews();
+}
+
+function renderImagePreviews() {
+  const container = document.getElementById("image-preview");
+  container.innerHTML = "";
+  attachedImages.forEach((url, i) => {
+    const thumb = document.createElement("div");
+    thumb.className = "preview-thumb";
+    thumb.innerHTML = `<img src="${url}"><button onclick="removeImage(${i})">×</button>`;
+    container.appendChild(thumb);
+  });
+  container.style.display = attachedImages.length > 0 ? "flex" : "none";
+}
+
+function clearImages() {
+  attachedImages = [];
+  renderImagePreviews();
 }
 
 const RANKS = ["2","3","4","5","6","7","8","9","T","J","Q","K","A"];
@@ -346,16 +367,16 @@ function renderMarkdown(text) {
   return html;
 }
 
-function addBubble(role, text, imageDataUrl) {
+function addBubble(role, text, imageDataUrls) {
   const div = document.createElement("div");
   div.className = "msg " + role;
   div.innerHTML = renderMarkdown(text);
-  if (imageDataUrl) {
+  (imageDataUrls || []).forEach((url) => {
     const img = document.createElement("img");
     img.className = "attached";
-    img.src = imageDataUrl;
+    img.src = url;
     div.appendChild(img);
-  }
+  });
   chatEl.appendChild(div);
   chatEl.scrollTop = chatEl.scrollHeight;
   return div;
@@ -363,23 +384,24 @@ function addBubble(role, text, imageDataUrl) {
 
 async function send() {
   const text = inputEl.value.trim();
-  const image = attachedImage;
-  if (!text && !image) return;
+  const images = attachedImages;
+  if (!text && images.length === 0) return;
   inputEl.value = "";
   sendBtn.disabled = true;
-  clearImage();
+  clearImages();
 
-  addBubble("user", text || "(photo only)", image);
+  addBubble("user", text || "(photo only)", images);
 
   // Plain string content for text-only messages (matches what we always sent before);
-  // a list of "content parts" -- text plus an image_url part -- when a photo is attached.
-  // This is OpenAI's multimodal message format; the model reads both parts together.
-  if (image) {
+  // a list of "content parts" -- text plus one image_url part per photo -- when photos
+  // are attached. This is OpenAI's multimodal message format; the model reads every
+  // part (e.g. a hand photo and a separate table photo) together as one message.
+  if (images.length > 0) {
     history.push({
       role: "user",
       content: [
         {type: "text", text: text || "What's going on here? What should I do?"},
-        {type: "image_url", image_url: {url: image}},
+        ...images.map((url) => ({type: "image_url", image_url: {url}})),
       ],
     });
   } else {
