@@ -21,7 +21,9 @@ app = FastAPI(title="Poker Chat Agent")
 
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    # Plain string for normal text messages, or a list of OpenAI "content parts" (text +
+    # image_url dicts) when an image is attached -- passed straight through to the API.
+    content: str | list[dict]
 
 
 class ChatRequest(BaseModel):

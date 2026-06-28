@@ -27,6 +27,12 @@ visible rather than hidden behind a framework's abstractions.
 4. **Real token streaming.** Both the OpenAI call (`stream=True`) and the FastAPI response are
    streamed end-to-end, so the browser shows text appearing incrementally rather than the full
    reply popping in at once.
+5. **Photo input, two models.** You can attach a photo of your hand/the table instead of typing
+   it out. Any turn with an image attached automatically switches from `gpt-4o-mini` to the
+   full `gpt-4o` for that turn — vision needs more care than plain text, since misreading even
+   one card's rank or suit from a photo would throw off the entire analysis. The image is
+   downscaled client-side before upload to keep payloads and cost down. See
+   `agent.py`'s `_has_image()` / `VISION_MODEL` and `static/index.html`'s `downscaleImage()`.
 
 ## Project layout
 

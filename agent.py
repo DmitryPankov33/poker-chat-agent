@@ -14,13 +14,21 @@ from openai import OpenAI
 from tools import TOOL_FUNCTIONS, TOOL_SCHEMAS
 
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-MODEL = "gpt-4o-mini"
+
+# Two different models for two different jobs: gpt-4o-mini is cheap and handles plain-text
+# tool-calling fine, but vision needs more care -- misreading one card's rank or suit from a
+# photo would throw off the entire analysis, so any turn with an image attached upgrades to
+# the full gpt-4o model for that turn instead.
+TEXT_MODEL = "gpt-4o-mini"
+VISION_MODEL = "gpt-4o"
 
 SYSTEM_PROMPT = """You are a friendly poker assistant. Users will describe a poker situation \
 in casual, conversational language — their hole cards, their position at the table, the \
-community board if any, and sometimes a pot size or a bet they're facing. Your job is to \
-figure out what's being described and help them understand it: what hand they have, their \
-odds, and what to consider doing.
+community board if any, and sometimes a pot size or a bet they're facing. Sometimes, instead \
+of typing it out, they'll attach a photo of their hand or the table. Read the cards and board \
+carefully from the image, the same way you'd read a text description, and proceed the same \
+way — if anything is unclear or partially hidden in the photo, say so and ask rather than \
+guessing at a card.
 
 You have three tools:
 - analyze_hand: current hand strength, outs, and odds to improve. Use whenever a board (or \
@@ -44,15 +52,27 @@ short, and skip it if the user is just asking a clarifying or unrelated follow-u
 rather than getting new advice."""
 
 
+def _has_image(messages: list[dict]) -> bool:
+    """True if any message in this conversation attaches an image -- content is a list of
+    parts (text/image) rather than a plain string when an image is involved."""
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            if any(part.get("type") == "image_url" for part in content):
+                return True
+    return False
+
+
 def run_agent_turn(messages: list[dict], _depth: int = 0):
     """Generator that yields text chunks for the model's reply to the latest message in
     `messages`. Mutates `messages` in place — appends whatever the assistant said (and any
     tool-call round trip along the way) so the caller can persist history across turns."""
     full_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
-    print(f"[agent] depth={_depth} sending {len(full_messages)} messages; last={full_messages[-1]}")
+    model = VISION_MODEL if _has_image(messages) else TEXT_MODEL
+    print(f"[agent] depth={_depth} model={model} sending {len(full_messages)} messages")
 
     stream = client.chat.completions.create(
-        model=MODEL,
+        model=model,
         messages=full_messages,
         tools=TOOL_SCHEMAS,
         stream=True,
