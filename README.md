@@ -27,12 +27,19 @@ visible rather than hidden behind a framework's abstractions.
 4. **Real token streaming.** Both the OpenAI call (`stream=True`) and the FastAPI response are
    streamed end-to-end, so the browser shows text appearing incrementally rather than the full
    reply popping in at once.
-5. **Photo input, two models.** You can attach a photo of your hand/the table instead of typing
-   it out. Any turn with an image attached automatically switches from `gpt-4o-mini` to the
-   full `gpt-4o` for that turn — vision needs more care than plain text, since misreading even
-   one card's rank or suit from a photo would throw off the entire analysis. The image is
-   downscaled client-side before upload to keep payloads and cost down. See
-   `agent.py`'s `_has_image()` / `VISION_MODEL` and `static/index.html`'s `downscaleImage()`.
+5. **Photo input, two models.** You can attach one or more photos (e.g. a separate hand photo
+   and table photo) instead of typing it out. Any turn with an image attached automatically
+   switches from `gpt-4o-mini` to the full `gpt-4o` for that turn — vision needs more care than
+   plain text, since misreading even one card's rank or suit from a photo would throw off the
+   entire analysis. Each image is downscaled client-side before upload to keep payloads and
+   cost down, processed one at a time rather than in parallel (concurrent canvas decoding
+   turned out to have a real race condition that occasionally produced a broken, empty image).
+   See `agent.py`'s `_has_image()` / `VISION_MODEL` and `static/index.html`'s
+   `downscaleImage()` / `handleImageSelect()`.
+6. **Asks instead of guessing.** If a tool needs something the user hasn't said yet (pot size,
+   bet to call, table position, or even a card that isn't clearly visible in a photo), the
+   system prompt requires asking a specific clarifying question rather than calling the tool
+   with a guessed argument or giving a vague, numberless answer.
 
 ## Project layout
 
